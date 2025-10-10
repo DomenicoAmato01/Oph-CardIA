@@ -1,4 +1,4 @@
 [core]
     remote = fundusrepo
 ['remote "fundusrepo"']
-    url = ssh://datarepo@172.16.129.172/home/dataRepo/cardio_fundus_repo
+    url = ssh://datarepo@172.16.129.172/home/dataRepo/Scrivania/cardio_fundus_repo
