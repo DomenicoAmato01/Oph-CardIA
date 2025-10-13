@@ -45,6 +45,7 @@ from skimage import exposure, img_as_ubyte
 from skimage.filters import frangi, threshold_otsu
 from skimage.morphology import remove_small_objects, closing, disk
 from tqdm import tqdm
+from fcmeans import FCM
 
 
 def read_image(path: Path) -> np.ndarray:
@@ -126,8 +127,27 @@ def apply_kirsch(image: np.ndarray) -> np.ndarray:
 	edge_image = cv2.normalize(edge_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 	return edge_image.astype(np.uint8)
 
+def apply_fcm(image: np.ndarray, n_clusters: int = 2) -> np.ndarray:
+	# Reshape image to (num_pixels, 1)
+	pixels = image.reshape(-1, 1).astype(np.float32)
 
-def process_image(path: Path, clahe_path: Path, out_path: Path, kirsch_path: Path, overwrite: bool = False) -> None:
+	# Apply FCM
+	fcm = FCM(n_clusters=n_clusters, m=2.0, max_iter=100, error=1e-5, n_jobs=-1)
+	fcm.fit(pixels)
+
+	# Get cluster centers and labels
+	centers = fcm.centers.flatten()
+	labels = fcm.predict(pixels)
+
+	# Create segmented image based on cluster centers
+	segmented = np.zeros_like(image, dtype=np.uint8)
+	for i, center in enumerate(centers):
+		segmented[labels.reshape(image.shape) == i] = int(center)
+
+	return segmented
+
+
+def process_image(path: Path, clahe_path: Path, out_path: Path, kirsch_path: Path, fuzzy_path: Path, overwrite: bool = False) -> None:
 	if out_path.exists() and not overwrite:
 		logging.debug("Skipping existing: %s", out_path)
 		return
@@ -148,6 +168,9 @@ def process_image(path: Path, clahe_path: Path, out_path: Path, kirsch_path: Pat
 
 	edge_img = apply_kirsch(clahe)
 	cv2.imwrite(str(kirsch_path), edge_img)
+
+	fuzzy_seg_img = apply_fcm(clahe, n_clusters=2)
+	cv2.imwrite(str(fuzzy_path), fuzzy_seg_img)
 
 	# enhanced = enhance_vessels(clahe)
 
@@ -201,16 +224,17 @@ def main() -> None:
 		out_p = args.output_dir / rel
 		clahe_p = args.clahe_dir / rel
 		kirsch_p = args.kirsch_dir / rel
+		fuzzy_p = args.fuzzy_dir / rel
 		clahe_p = clahe_p.with_suffix(".png")
 		out_p = out_p.with_suffix(".png")
 		kirsch_p = kirsch_p.with_suffix(".png")
+		fuzzy_p = fuzzy_p.with_suffix(".png")
 
 		try:
-			process_image(p, clahe_p, out_p, kirsch_p, overwrite=args.overwrite)
+			process_image(p, clahe_p, out_p, kirsch_p, fuzzy_p, overwrite=args.overwrite)
 		except Exception as e:
 			logging.warning("Failed processing %s: %s", p, e)
 
 
 if __name__ == "__main__":
 	main()
-
