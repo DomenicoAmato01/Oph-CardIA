@@ -33,6 +33,7 @@ Esempio d'uso:
 from __future__ import annotations
 
 import argparse
+from html import parser
 import logging
 import os
 from pathlib import Path
@@ -101,11 +102,16 @@ def binarize_and_postprocess(enhanced: np.ndarray, min_size: int = 200, closing_
 	return out
 
 
-def process_image(path: Path, out_path: Path, overwrite: bool = False) -> None:
+def process_image(path: Path, clahe_path: Path,out_path: Path, overwrite: bool = False) -> None:
 	if out_path.exists() and not overwrite:
 		logging.debug("Skipping existing: %s", out_path)
 		return
+	
+    # Ensure parent exists
+	out_path.parent.mkdir(parents=True, exist_ok=True)
+	clahe_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Read and process
 	img = read_image(path)
 	green = get_green_channel(img)
 
@@ -113,15 +119,15 @@ def process_image(path: Path, out_path: Path, overwrite: bool = False) -> None:
 	green_blur = cv2.medianBlur(green, 3)
 
 	clahe = apply_clahe(green_blur)
+	cv2.imwrite(str(clahe_path), clahe)
 
-	enhanced = enhance_vessels(clahe)
+	# enhanced = enhance_vessels(clahe)
 
-	mask = binarize_and_postprocess(enhanced)
+	# mask = binarize_and_postprocess(enhanced)
 
-	# Ensure parent exists
-	out_path.parent.mkdir(parents=True, exist_ok=True)
+	
 	# Save as PNG 0/255
-	cv2.imwrite(str(out_path), mask)
+	# cv2.imwrite(str(out_path), clahe)
 
 
 def iter_images(input_dir: Path):
@@ -133,6 +139,7 @@ def iter_images(input_dir: Path):
 def main() -> None:
 	parser = argparse.ArgumentParser(description="Generate vessel segmentation masks from fundus images")
 	parser.add_argument("--input-dir", type=Path, default=Path("data/raw"), help="Directory with input images")
+	parser.add_argument("--clahe-dir", type=Path, default=Path("data/clahe"), help="Directory to write clahe images")
 	parser.add_argument("--output-dir", type=Path, default=Path("data/vessel_mask"), help="Directory to write masks")
 	parser.add_argument("--overwrite", action="store_true", help="Overwrite existing masks")
 	parser.add_argument("--min-size", type=int, default=200, help="Minimum connected component size to keep (pixels)")
@@ -161,9 +168,11 @@ def main() -> None:
 		except Exception:
 			rel = p.name
 		out_p = args.output_dir / rel
+		clahe_p = args.clahe_dir / rel
+		clahe_p = clahe_p.with_suffix(".png")
 		out_p = out_p.with_suffix(".png")
 		try:
-			process_image(p, out_p, overwrite=args.overwrite)
+			process_image(p, clahe_p, out_p, overwrite=args.overwrite)
 		except Exception as e:
 			logging.warning("Failed processing %s: %s", p, e)
 
