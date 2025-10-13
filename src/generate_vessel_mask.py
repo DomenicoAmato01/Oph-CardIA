@@ -101,8 +101,33 @@ def binarize_and_postprocess(enhanced: np.ndarray, min_size: int = 200, closing_
 	out = img_as_ubyte(bw_clean)
 	return out
 
+def getKirschFilters():
+    kirsch = [5, -3, -3, -3, -3, -3, 5, 5]
+    rot = lambda l, n: l[-n:] + l[:-n]
+    filts = np.zeros((8, 3, 3), dtype=np.int32)
+    for d in range(8):
+        filts[d] = np.array([kirsch[0:3],
+                             [kirsch[7], 0, kirsch[3]],
+                             kirsch[6:3:-1]], dtype=np.int32)
+        kirsch = rot(kirsch, 1)
+    return filts
 
-def process_image(path: Path, clahe_path: Path,out_path: Path, overwrite: bool = False) -> None:
+def apply_kirsch(image: np.ndarray) -> np.ndarray:
+	filters = getKirschFilters()
+	rows, cols = image.shape
+	edge_image = np.zeros((rows, cols), dtype=np.float32)
+
+	# Apply each filter and keep the maximum response
+	for f in filters:
+		filtered = cv2.filter2D(image.astype(np.float32), -1, f)
+		edge_image = np.maximum(edge_image, filtered)
+
+	# Normalize to range [0, 255]
+	edge_image = cv2.normalize(edge_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+	return edge_image.astype(np.uint8)
+
+
+def process_image(path: Path, clahe_path: Path, out_path: Path, kirsch_path: Path, overwrite: bool = False) -> None:
 	if out_path.exists() and not overwrite:
 		logging.debug("Skipping existing: %s", out_path)
 		return
@@ -121,6 +146,9 @@ def process_image(path: Path, clahe_path: Path,out_path: Path, overwrite: bool =
 	clahe = apply_clahe(green_blur)
 	cv2.imwrite(str(clahe_path), clahe)
 
+	edge_img = apply_kirsch(clahe)
+	cv2.imwrite(str(out_path), edge_img)
+
 	# enhanced = enhance_vessels(clahe)
 
 	# mask = binarize_and_postprocess(enhanced)
@@ -136,10 +164,13 @@ def iter_images(input_dir: Path):
 			yield p
 
 
+
+
 def main() -> None:
 	parser = argparse.ArgumentParser(description="Generate vessel segmentation masks from fundus images")
 	parser.add_argument("--input-dir", type=Path, default=Path("data/raw"), help="Directory with input images")
-	parser.add_argument("--clahe-dir", type=Path, default=Path("data/clahe"), help="Directory to write clahe images")
+	parser.add_argument("--clahe-dir", type=Path, default=Path("data/clahe_enhanced"), help="Directory to write clahe images")
+	parser.add_argument("--kirsch-dir", type=Path, default=Path("data/kirsch_enhanced"), help="Directory to write kirsch images")
 	parser.add_argument("--output-dir", type=Path, default=Path("data/vessel_mask"), help="Directory to write masks")
 	parser.add_argument("--overwrite", action="store_true", help="Overwrite existing masks")
 	parser.add_argument("--min-size", type=int, default=200, help="Minimum connected component size to keep (pixels)")
@@ -169,10 +200,13 @@ def main() -> None:
 			rel = p.name
 		out_p = args.output_dir / rel
 		clahe_p = args.clahe_dir / rel
+		kirsch_p = args.kirsch_dir / rel
 		clahe_p = clahe_p.with_suffix(".png")
 		out_p = out_p.with_suffix(".png")
+		kirsch_p = kirsch_p.with_suffix(".png")
+		
 		try:
-			process_image(p, clahe_p, out_p, overwrite=args.overwrite)
+			process_image(p, clahe_p, out_p, kirsch_p, overwrite=args.overwrite)
 		except Exception as e:
 			logging.warning("Failed processing %s: %s", p, e)
 
