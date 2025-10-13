@@ -147,7 +147,7 @@ def process_image(path: Path, clahe_path: Path, out_path: Path, kirsch_path: Pat
 	cv2.imwrite(str(clahe_path), clahe)
 
 	edge_img = apply_kirsch(clahe)
-	cv2.imwrite(str(out_path), edge_img)
+	cv2.imwrite(str(kirsch_path), edge_img)
 
 	# enhanced = enhance_vessels(clahe)
 
@@ -204,7 +204,7 @@ def main() -> None:
 		clahe_p = clahe_p.with_suffix(".png")
 		out_p = out_p.with_suffix(".png")
 		kirsch_p = kirsch_p.with_suffix(".png")
-		
+
 		try:
 			process_image(p, clahe_p, out_p, kirsch_p, overwrite=args.overwrite)
 		except Exception as e:
