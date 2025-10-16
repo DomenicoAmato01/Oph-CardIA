@@ -45,6 +45,13 @@ def region_seg(I: np.ndarray, init_mask: np.ndarray, max_its: int, alpha: float 
 
     for its in range(1, max_its + 1):
         idx = np.where((phi <= 1.2) & (phi >= -1.2))
+        # If the narrow band around the zero level is empty, the curve cannot evolve further.
+        # This can happen if phi became very steep or degenerate; stop to avoid empty-array reductions.
+        if idx[0].size == 0:
+            # optionally show final curve
+            if display and plt is not None:
+                show_curve_and_phi(I, phi, its)
+            break
         flat_idx = np.ravel_multi_index(idx, phi.shape)
 
         upts = phi <= 0
@@ -56,6 +63,9 @@ def region_seg(I: np.ndarray, init_mask: np.ndarray, max_its: int, alpha: float 
         F_vals = (I[idx] - u) ** 2 - (I[idx] - v) ** 2
 
         curvature = get_curvature(phi, idx)
+        # If curvature is empty (shouldn't normally happen), fallback to zeros
+        if curvature.size == 0:
+            curvature = np.zeros_like(F_vals)
 
         max_abs_F = np.max(np.abs(F_vals))
         if max_abs_F == 0:
@@ -128,6 +138,9 @@ def im2graydouble(img: np.ndarray) -> np.ndarray:
 def get_curvature(phi: np.ndarray, idx: Tuple[np.ndarray, np.ndarray]) -> np.ndarray:
     # idx are arrays (y_indices, x_indices) from np.where
     y, x = idx
+    # if no indices provided, return empty array
+    if y.size == 0:
+        return np.array([], dtype=phi.dtype)
     dimy, dimx = phi.shape
 
     # neighbor coordinates with clamping
