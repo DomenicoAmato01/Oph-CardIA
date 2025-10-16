@@ -173,7 +173,7 @@ def apply_fcm(image: np.ndarray, n_clusters: int = 2) -> Tuple[np.ndarray, np.nd
 	# Remove small objects to obtain final mask
 	I2_mask = remove_small_objects((I2 > 0), min_size=50)
 
-	return segmented, labels, centers, I2_mask
+	return I2_mask
 
 
 def process_image(path: Path, clahe_path: Path, out_path: Path, kirsch_path: Path, fuzzy_path: Path, overwrite: bool = False) -> None:
@@ -202,17 +202,60 @@ def process_image(path: Path, clahe_path: Path, out_path: Path, kirsch_path: Pat
 	cv2.imwrite(str(kirsch_path), edge_img)
 
 	print("Processing FCM clustering...")
-	segmented, labels, centers, vessel_mask = apply_fcm(edge_img, n_clusters=2)
-	cv2.imwrite(str(fuzzy_path), segmented)
+	vessel_mask = apply_fcm(edge_img, n_clusters=2)
+	cv2.imwrite(str(fuzzy_path), vessel_mask.astype(np.uint8)*255)
 	
-	print("Processing region-based active contour segmentation...")
-	# use vessel_mask (from MATLAB-style routine) as initial mask for region_seg
-	init_mask = vessel_mask.astype(bool)
-	# try:
-	seg_mask = region_seg(clahe, init_mask, max_its=300, alpha=0.2, display=False)
-	# except Exception as e:
-	# 	logging.warning("region_seg failed for %s: %s", path, e)
-	# 	seg_mask = init_mask
+	print("Processing region-based active contour segmentation (two-stage, translated from MATLAB)...")
+	# J = I2 in MATLAB; here vessel_mask corresponds to I2
+	# Work on a numeric image (0-255) for region_seg
+	J = (vessel_mask.astype(np.uint8) * 255)
+	I2 = J.astype(np.float32)
+
+	# Helper to clamp MATLAB-style hard-coded rectangles to image bounds
+	def clamp_rect(r1, r2, c1, c2, shape):
+		r1 = max(0, r1 - 1)
+		c1 = max(0, c1 - 1)
+		r2 = min(shape[0], r2)
+		c2 = min(shape[1], c2)
+		return r1, r2, c1, c2
+
+	# First pass: m(10:575,5:555)=1 and resize to 0.5
+	m = np.zeros_like(J, dtype=np.uint8)
+	r1, r2, c1, c2 = clamp_rect(10, 575, 5, 555, J.shape)
+	if r1 < r2 and c1 < c2:
+		m[r1:r2, c1:c2] = 1
+
+	I2_small = cv2.resize(I2, (0, 0), fx=0.5, fy=0.5, interpolation=cv2.INTER_LINEAR)
+	m_small = cv2.resize(m, (0, 0), fx=0.5, fy=0.5, interpolation=cv2.INTER_NEAREST).astype(bool)
+
+	try:
+		seg = region_seg(I2_small, m_small, max_its=610, display=False)
+	except Exception as e:
+		logging.warning("region_seg first pass failed for %s: %s", path, e)
+		seg = np.copy(m_small).astype(np.uint8) * 255
+
+	# I2 = seg - I2 (as in MATLAB)
+	I2_small = seg.astype(np.float32) - I2_small
+
+	# Second pass: new mask m(10:575,2:555)=1, resize and run region_seg with fewer iterations
+	m2 = np.zeros_like(J, dtype=np.uint8)
+	r1, r2, c1, c2 = clamp_rect(10, 575, 2, 555, J.shape)
+	if r1 < r2 and c1 < c2:
+		m2[r1:r2, c1:c2] = 1
+
+	m2_small = cv2.resize(m2, (0, 0), fx=0.5, fy=0.5, interpolation=cv2.INTER_NEAREST).astype(bool)
+
+	try:
+		seg = region_seg(I2_small, m2_small, max_its=200, display=False)
+	except Exception as e:
+		logging.warning("region_seg second pass failed for %s: %s", path, e)
+		seg = np.copy(m2_small).astype(np.uint8) * 255
+
+	I2_small = seg.astype(np.float32) - I2_small
+
+	# Upsample back to original size and threshold >0 to produce final boolean mask
+	final_res = cv2.resize(I2_small, (J.shape[1], J.shape[0]), interpolation=cv2.INTER_LINEAR)
+	seg_mask = final_res > 0
 
 	# save final segmentation to out_path (0/255)
 	out_mask = (seg_mask.astype(np.uint8) * 255)
